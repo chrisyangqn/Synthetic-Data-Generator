@@ -1,0 +1,4 @@
+field_name,field_question,answer,text
+risk_level,What is the risk level assigned to the contract?,Low,"The contract is considered low risk based on the assessment criteria."
+risk_level,What is the risk level assigned to the contract?,Medium,"This agreement is assigned a medium risk level due to moderate exposure."
+risk_level,What is the risk level assigned to the contract?,High,"The contract is classified as high risk due to the nature of services provided." 
