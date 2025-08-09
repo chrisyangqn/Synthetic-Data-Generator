@@ -15,17 +15,21 @@ from typing import Optional, List, Dict
 
 
 class OllamaClient:
-    def __init__(self, base_url: str = "http://127.0.0.1:11434", model_name: str = "llama2:7b"):
+    def __init__(self, base_url: Optional[str] = None, model_name: str = "deepseek-r1"):
         """
         Initialize the Ollama client for text processing
         
         Args:
-            base_url: Ollama server URL (default: http://127.0.0.1:11434)
-            model_name: Name of the model in Ollama (default: llama2:7b)
+            base_url: Ollama server URL. If not provided, uses env var OLLAMA_BASE_URL
+                      or defaults to http://127.0.0.1:11434
+            model_name: Name of the model in Ollama (default: deepseek-r1)
         """
-        self.base_url = base_url
+        resolved_base_url = (
+            base_url if base_url is not None else os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+        )
+        self.base_url = resolved_base_url
         self.model_name = model_name
-        self.api_url = f"{base_url}/api/generate"
+        self.api_url = f"{self.base_url}/api/generate"
     
     def generate_response(self, prompt: str, stream: bool = False) -> str:
         """
@@ -153,13 +157,13 @@ class OllamaClient:
         print(f"✅ Processed CSV saved to: {output_csv_path}")
         return output_csv_path
     
-    def process_folder(self, input_folder: str = "field_name", output_folder: str = "field_name_final") -> List[str]:
+    def process_folder(self, input_folder: str = "field_name", output_folder: str = "synthetic_data") -> List[str]:
         """
         Process all CSV files in the input folder and save to output folder
         
         Args:
             input_folder: Folder containing input CSV files (default: "field_name")
-            output_folder: Folder to save processed CSV files (default: "field_name_final")
+            output_folder: Folder to save processed CSV files (default: "synthetic_data")
             
         Returns:
             List of processed output file paths
@@ -202,6 +206,133 @@ class OllamaClient:
         
         return processed_files
     
+    def generate_synthetic_from_questions(
+        self,
+        input_csv_path: str,
+        output_folder: str = "synthetic_data",
+        rows_per_question: int = 100,
+    ) -> List[str]:
+        """
+        Generate synthetic data from zero for each question in the input CSV.
+
+        The input CSV must contain columns: 'field_name', 'field_question'.
+        For each row (question), a CSV is generated in output_folder with columns:
+        'field_name', 'field_question', 'answer', 'text'.
+
+        Args:
+            input_csv_path: Path to the questions CSV (field_name, field_question)
+            output_folder: Folder to save per-question synthetic CSV files
+            rows_per_question: Number of synthetic rows to generate per question
+
+        Returns:
+            List of generated file paths
+        """
+        if not os.path.exists(input_csv_path):
+            raise FileNotFoundError(f"Input CSV file not found: {input_csv_path}")
+
+        os.makedirs(output_folder, exist_ok=True)
+
+        with open(input_csv_path, 'r', newline='', encoding='utf-8') as csvfile:
+            reader = csv.DictReader(csvfile)
+            fieldnames = reader.fieldnames or []
+            required = {"field_name", "field_question"}
+            if not required.issubset(set(fn.strip() for fn in fieldnames)):
+                raise ValueError("CSV must contain 'field_name' and 'field_question' columns")
+
+            questions = list(reader)
+
+        generated_paths: List[str] = []
+        for index, row in enumerate(questions, start=1):
+            field_name_value = (row.get("field_name") or "").strip() or f"field_{index}"
+            field_question_value = (row.get("field_question") or "").strip()
+
+            print(f"Generating {rows_per_question} synthetic rows for '{field_name_value}'...")
+            synthetic_rows = self._generate_synthetic_for_one_question(
+                field_name_value, field_question_value, rows_per_question
+            )
+
+            safe_field_name = ''.join(c if c.isalnum() or c in ('-', '_') else '_' for c in field_name_value.lower())
+            output_path = os.path.join(output_folder, f"{index:02d}_{safe_field_name}.csv")
+
+            with open(output_path, 'w', newline='', encoding='utf-8') as outcsv:
+                writer = csv.DictWriter(outcsv, fieldnames=["field_name", "field_question", "answer", "text"])
+                writer.writeheader()
+                for r in synthetic_rows:
+                    writer.writerow({
+                        "field_name": field_name_value,
+                        "field_question": field_question_value,
+                        "answer": r.get("answer", ""),
+                        "text": r.get("text", ""),
+                    })
+
+            generated_paths.append(output_path)
+            print(f"Saved: {output_path}")
+
+        print(f"\n✅ Generated {len(generated_paths)} files to {output_folder}")
+        return generated_paths
+
+    def _generate_synthetic_for_one_question(
+        self, field_name_value: str, field_question_value: str, num_rows: int
+    ) -> List[Dict[str, str]]:
+        """
+        Ask the model to generate synthetic rows for a single question.
+
+        Returns list of {answer, text} dicts with length == num_rows when possible.
+        """
+        system_instructions = (
+            "You generate realistic, diverse synthetic data answers for contract-like or enterprise datasets. "
+            "Return strictly JSON only, no code fences, no commentary."
+        )
+
+        prompt = (
+            f"{system_instructions}\n\n"
+            f"Task: Generate {num_rows} diverse synthetic answers for the question below.\n"
+            f"Each item must be a JSON object with keys: 'answer' (short label) and 'text' (1-2 sentence description).\n"
+            f"Question (field_name={field_name_value}): {field_question_value}\n\n"
+            f"Return a JSON array with exactly {num_rows} items."
+        )
+
+        raw = self.generate_response(prompt)
+        rows: List[Dict[str, str]] = []
+        if raw:
+            raw_stripped = raw.strip().strip('`').strip()
+            # Try to locate JSON array within the text
+            start = raw_stripped.find('[')
+            end = raw_stripped.rfind(']')
+            if start != -1 and end != -1 and end > start:
+                json_block = raw_stripped[start:end+1]
+                try:
+                    parsed = json.loads(json_block)
+                    if isinstance(parsed, list):
+                        for item in parsed:
+                            if isinstance(item, dict):
+                                rows.append({
+                                    "answer": str(item.get("answer", "")).strip(),
+                                    "text": str(item.get("text", "")).strip(),
+                                })
+                except Exception:
+                    pass
+
+        # Fallback to simple templated rows if parsing failed
+        if not rows:
+            for i in range(1, num_rows + 1):
+                rows.append({
+                    "answer": f"value_{i}",
+                    "text": f"Synthetic response {i} for {field_name_value}: {field_question_value}",
+                })
+
+        # Truncate or pad to exact length
+        if len(rows) > num_rows:
+            rows = rows[:num_rows]
+        elif len(rows) < num_rows:
+            for i in range(len(rows) + 1, num_rows + 1):
+                rows.append({
+                    "answer": f"value_{i}",
+                    "text": f"Synthetic response {i} for {field_name_value}: {field_question_value}",
+                })
+
+        return rows
+
     def _generate_enhanced_texts_batch(self, original_texts: List[str]) -> List[str]:
         """
         Generate enhanced text for multiple texts in a single API call
@@ -421,7 +552,7 @@ def main():
         print("Failed to connect to Ollama or model not found.")
         print("Please make sure:")
         print("1. Ollama is running (ollama serve)")
-        print("2. Llama2 model is pulled (ollama pull llama2:7b)")
+        print("2. DeepSeek R1 model is pulled (ollama pull deepseek-r1)")
         sys.exit(1)
     
     print("✅ Connected to Ollama successfully!")
@@ -429,7 +560,7 @@ def main():
     # Check if folder processing is requested
     if len(sys.argv) > 1 and sys.argv[1] == "--folder":
         input_folder = sys.argv[2] if len(sys.argv) > 2 else "field_name"
-        output_folder = sys.argv[3] if len(sys.argv) > 3 else "field_name_final"
+        output_folder = sys.argv[3] if len(sys.argv) > 3 else "synthetic_data"
         
         try:
             processed_files = client.process_folder(input_folder, output_folder)
@@ -442,12 +573,21 @@ def main():
     # Check if single CSV file is provided as command line argument
     elif len(sys.argv) > 1:
         input_csv = sys.argv[1]
-        output_csv = sys.argv[2] if len(sys.argv) > 2 else None
-        
+        # If the CSV looks like a questions list (field_name, field_question), generate from zero
         try:
-            output_path = client.process_csv_with_filler_sentences(input_csv, output_csv)
-            print(f"\n🎉 CSV processing completed successfully!")
-            print(f"Output file: {output_path}")
+            with open(input_csv, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                headers = set((reader.fieldnames or []))
+            if {"field_name", "field_question"}.issubset({h.strip() for h in headers}):
+                rows_per_q = int(os.getenv("ROWS_PER_QUESTION", "100"))
+                client.generate_synthetic_from_questions(input_csv, output_folder="synthetic_data", rows_per_question=rows_per_q)
+                print("\n🎉 Synthetic data generation completed successfully!")
+            else:
+                # Backward-compatible path: enhance existing CSV with 'text' field
+                output_csv = sys.argv[2] if len(sys.argv) > 2 else None
+                output_path = client.process_csv_with_filler_sentences(input_csv, output_csv)
+                print(f"\n🎉 CSV processing completed successfully!")
+                print(f"Output file: {output_path}")
         except Exception as e:
             print(f"❌ Error processing CSV: {e}")
             sys.exit(1)
@@ -456,8 +596,8 @@ def main():
         print("\n" + "="*60)
         print("CSV PROCESSING MODE")
         print("="*60)
-        print("This script will process CSV files and add realistic contract-style filler sentences")
-        print("to the 'text' column for healthcare policy documents.")
+        print("This script will generate synthetic data from zero using model prompts based on questions.")
+        print("Provide a question list CSV and get per-question CSV outputs with synthetic answers.")
         print("\nUsage:")
         print("  python ollama_client.py --folder [input_folder] [output_folder]")
         print("  python ollama_client.py input.csv [output.csv]")
@@ -466,7 +606,7 @@ def main():
         # Interactive CSV processing
         while True:
             try:
-                choice = input("\nChoose mode (1 for folder processing, 2 for single file, 3 for quick defaults, 'quit' to exit): ").strip()
+                choice = input("\nChoose mode (1 generate-folder, 2 single-file, 3 quick defaults, 'quit' to exit): ").strip()
                 
                 if choice.lower() in ['quit', 'exit', 'q']:
                     print("Goodbye!")
@@ -479,9 +619,9 @@ def main():
                         input_folder = "field_name"
                         print(f"Using default input folder: {input_folder}")
                     
-                    output_folder = input("Enter output folder path (or press Enter for 'field_name_final'): ").strip()
+                    output_folder = input("Enter output folder path (or press Enter for 'synthetic_data'): ").strip()
                     if not output_folder:
-                        output_folder = "field_name_final"
+                        output_folder = "synthetic_data"
                         print(f"Using default output folder: {output_folder}")
                     
                     try:
@@ -493,7 +633,7 @@ def main():
                         print(f"❌ Error processing folder: {e}")
                 
                 elif choice == '2':
-                    # Single file processing mode
+                    # Single file mode: detects question CSV vs. legacy enhance-CSV
                     input_csv = input("Enter CSV file path: ").strip()
                     
                     if not input_csv:
@@ -504,20 +644,28 @@ def main():
                         output_csv = None
                     
                     try:
-                        output_path = client.process_csv_with_filler_sentences(input_csv, output_csv)
-                        print(f"\n🎉 CSV processing completed successfully!")
-                        print(f"Output file: {output_path}")
+                        with open(input_csv, 'r', newline='', encoding='utf-8') as f:
+                            reader = csv.DictReader(f)
+                            headers = set((reader.fieldnames or []))
+                        if {"field_name", "field_question"}.issubset({h.strip() for h in headers}):
+                            rows_per_q = int(os.getenv("ROWS_PER_QUESTION", "100"))
+                            client.generate_synthetic_from_questions(input_csv, output_folder="synthetic_data", rows_per_question=rows_per_q)
+                            print("\n🎉 Synthetic data generation completed successfully!")
+                        else:
+                            output_path = client.process_csv_with_filler_sentences(input_csv, output_csv)
+                            print(f"\n🎉 CSV processing completed successfully!")
+                            print(f"Output file: {output_path}")
                     except Exception as e:
                         print(f"❌ Error processing CSV: {e}")
                 
                 elif choice == '3':
-                    # Quick defaults mode - use field_name and field_name_final
-                    print("Using default folders: field_name → field_name_final")
+                    # Quick defaults mode - use field_name and synthetic_data
+                    print("Using default folders: field_name → synthetic_data")
                     try:
-                        processed_files = client.process_folder("field_name", "field_name_final")
+                        processed_files = client.process_folder("field_name", "synthetic_data")
                         print(f"\n🎉 Folder processing completed successfully!")
                         print(f"Processed {len(processed_files)} files")
-                        print(f"Output folder: field_name_final")
+                        print(f"Output folder: synthetic_data")
                     except Exception as e:
                         print(f"❌ Error processing folder: {e}")
                 

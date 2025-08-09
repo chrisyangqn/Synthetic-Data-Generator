@@ -1,6 +1,10 @@
-# Llama Ollama Client
+<<<<<<< HEAD
+# DeepSeek R1 Ollama Client
+=======
+# Synthetic Data Generator
+>>>>>>> f918ddc9f8d895a59e0c476cda0847f84c68769f
 
-A Python script to interact with Llama models through Ollama, with specialized functionality for processing CSV files and generating enhanced text data for NLP training. The model is used to fulfill and expand text content based on given environments and contexts.
+A Python script to interact with DeepSeek R1 models through Ollama, with specialized functionality for processing CSV files and generating enhanced text data for NLP training. The model is used to fulfill and expand text content based on given environments and contexts.
 
 ## Prerequisites
 
@@ -8,17 +12,14 @@ A Python script to interact with Llama models through Ollama, with specialized f
    - Install Ollama from [https://ollama.ai](https://ollama.ai)
    - Start Ollama: `ollama serve`
 
-2. **Llama model pulled**
+2. **DeepSeek R1 model pulled**
    ```bash
-   ollama pull llama2:7b
+   ollama pull deepseek-r1
    ```
    
-   Or for other Llama variants:
+   Or for other DeepSeek R1 variants (see `ollama list` for what's available):
    ```bash
-   ollama pull llama2:13b
-   ollama pull llama2:70b
-   ollama pull llama2:7b-chat
-   ollama pull llama2:13b-chat
+   ollama pull deepseek-r1:7b
    ```
 
 ## Installation
@@ -84,7 +85,7 @@ Into something like:
 from ollama_client import OllamaClient
 
 # Initialize client
-client = OllamaClient(model_name="llama2:7b")
+client = OllamaClient(model_name="deepseek-r1")
 
 # Process CSV file
 output_path = client.process_csv_with_filler_sentences("input.csv", "output.csv")
@@ -97,10 +98,10 @@ print(enhanced_text)
 
 ### Custom Model Names
 
-If you're using a different Llama model, specify it when initializing:
+If you're using a different DeepSeek R1 variant, specify it when initializing:
 
 ```python
-client = OllamaClient(model_name="llama2:13b")
+client = OllamaClient(model_name="deepseek-r1:7b")
 ```
 
 ## Features
@@ -114,16 +115,48 @@ client = OllamaClient(model_name="llama2:13b")
 - ✅ Interactive mode for file processing
 - ✅ Command line interface for batch processing
 
-## Sample Data
+## Docker
 
-A sample CSV file `field_name/sample_data.csv` is included to demonstrate the functionality. You can test the script using:
+You can run this tool in Docker. The container expects an Ollama server to be reachable at `OLLAMA_BASE_URL`. By default, it uses `http://host.docker.internal:11434` to connect to an Ollama instance running on the host.
 
+### Build the image
 ```bash
-python ollama_client.py field_name/sample_data.csv
+docker build -t sdg-app .
 ```
 
-The sample data contains 3 rows with the following structure:
-- `field_name`: The field identifier (e.g., risk_level)
-- `field_question`: The question being asked about the field
-- `answer`: The answer category (e.g., Low, Medium, High)
-- `text`: The descriptive text that will be enhanced
+### Run against a CSV
+```bash
+# Mount your local data folders so outputs are persisted
+mkdir -p synthetic_data
+
+docker run --rm -it \
+  -e OLLAMA_BASE_URL=http://host.docker.internal:11434 \
+  -v "$PWD/field_name:/app/field_name" \
+  -v "$PWD/synthetic_data:/app/synthetic_data" \
+  sdg-app field_name/sample_data.csv
+```
+
+### Run interactive mode
+```bash
+docker run --rm -it \
+  -e OLLAMA_BASE_URL=http://host.docker.internal:11434 \
+  -v "$PWD/field_name:/app/field_name" \
+  -v "$PWD/synthetic_data:/app/synthetic_data" \
+  sdg-app
+```
+
+<<<<<<< HEAD
+Tip for Linux: replace `host.docker.internal` with your host IP (often `172.17.0.1`) or run Ollama in another container and network them together.
+=======
+### "CSV file must contain a 'text' column" error
+Ensure your CSV file has a column named exactly `text` (case-sensitive).
+
+### "Input CSV file not found" error
+Check that the file path is correct and the file exists.
+
+### Different Ollama URL
+If Ollama is running on a different port or host:
+```python
+client = OllamaClient(base_url="http://localhost:11435")
+``
+>>>>>>> f918ddc9f8d895a59e0c476cda0847f84c68769f

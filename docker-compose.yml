@@ -1,0 +1,32 @@
+version: "3.9"
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # Optionally pre-pull the model on start (requires recent images)
+    # command: ["sh", "-lc", "ollama serve & sleep 2 && ollama pull deepseek-r1 && wait"]
+
+  app:
+    build: .
+    container_name: sdg-app
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ./field_name:/app/field_name
+      - ./synthetic_data:/app/synthetic_data
+    command: ["field_name/sample_data.csv"]
+
+volumes:
+  ollama-data:
