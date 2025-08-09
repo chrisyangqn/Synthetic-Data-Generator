@@ -1,4 +1,4 @@
-# Llama Ollama Client
+# Synthetic Data Generator
 
 A Python script to interact with Llama models through Ollama, with specialized functionality for processing CSV files and generating enhanced text data for NLP training. The model is used to fulfill and expand text content based on given environments and contexts.
 
