@@ -1,5 +1,9 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
 # DeepSeek R1 Ollama Client
+=======
+# Synthetic Data Generator
+>>>>>>> f918ddc9f8d895a59e0c476cda0847f84c68769f
 =======
 # Synthetic Data Generator
 >>>>>>> f918ddc9f8d895a59e0c476cda0847f84c68769f
@@ -159,4 +163,7 @@ If Ollama is running on a different port or host:
 ```python
 client = OllamaClient(base_url="http://localhost:11435")
 ``
+<<<<<<< HEAD
+>>>>>>> f918ddc9f8d895a59e0c476cda0847f84c68769f
+=======
 >>>>>>> f918ddc9f8d895a59e0c476cda0847f84c68769f
