@@ -1,12 +1,4 @@
-<<<<<<< HEAD
-<<<<<<< HEAD
-# DeepSeek R1 Ollama Client
-=======
 # Synthetic Data Generator
->>>>>>> f918ddc9f8d895a59e0c476cda0847f84c68769f
-=======
-# Synthetic Data Generator
->>>>>>> f918ddc9f8d895a59e0c476cda0847f84c68769f
 
 A Python script to interact with DeepSeek R1 models through Ollama, with specialized functionality for processing CSV files and generating enhanced text data for NLP training. The model is used to fulfill and expand text content based on given environments and contexts.
 
@@ -162,8 +154,4 @@ Check that the file path is correct and the file exists.
 If Ollama is running on a different port or host:
 ```python
 client = OllamaClient(base_url="http://localhost:11435")
-``
-<<<<<<< HEAD
->>>>>>> f918ddc9f8d895a59e0c476cda0847f84c68769f
-=======
->>>>>>> f918ddc9f8d895a59e0c476cda0847f84c68769f
+```
