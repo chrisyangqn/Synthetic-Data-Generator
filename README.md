@@ -1,140 +1,82 @@
-<<<<<<< HEAD
-<<<<<<< HEAD
-# DeepSeek R1 Ollama Client
-=======
-# Synthetic Data Generator
->>>>>>> f918ddc9f8d895a59e0c476cda0847f84c68769f
-=======
-# Synthetic Data Generator
->>>>>>> f918ddc9f8d895a59e0c476cda0847f84c68769f
+# Synthetic Data Generator (DeepSeek R1 via Ollama)
 
-A Python script to interact with DeepSeek R1 models through Ollama, with specialized functionality for processing CSV files and generating enhanced text data for NLP training. The model is used to fulfill and expand text content based on given environments and contexts.
+Generate high-quality synthetic data from zero using DeepSeek R1 models through Ollama. Provide a question list CSV and the tool will create per-question CSVs with realistic answers and short descriptions suitable for NLP training.
+
+## What it does
+
+- Input: a questions CSV with columns:
+  - `field_name`: identifier for the field (e.g., `id`, `title`, `status`)
+  - `field_question`: the question to synthesize answers for
+- Output: per-question CSV files written to `synthetic_data/` with columns:
+  - `field_name`, `field_question`, `answer` (short label), `text` (1–2 sentence description)
+- Optional legacy mode: given a CSV with a `text` column, the script can enhance each `text` entry in place (backwards compatibility).
 
 ## Prerequisites
 
-1. **Ollama installed and running**
-   - Install Ollama from [https://ollama.ai](https://ollama.ai)
-   - Start Ollama: `ollama serve`
-
-2. **DeepSeek R1 model pulled**
+1. Ollama installed and running
+   - Install from `https://ollama.ai`
+   - Start the server: `ollama serve`
+2. DeepSeek R1 model pulled
    ```bash
    ollama pull deepseek-r1
-   ```
-   
-   Or for other DeepSeek R1 variants (see `ollama list` for what's available):
-   ```bash
+   # or another variant if available
    ollama pull deepseek-r1:7b
    ```
 
 ## Installation
 
-1. Install Python dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+```bash
+pip install -r requirements.txt
+```
 
 ## Usage
 
-### CSV Processing (Primary Function)
+### A) Zero-shot synthetic generation (recommended)
 
-The script is designed to process CSV files containing text data and add realistic context-appropriate filler sentences to expand and fulfill the text content for NLP training purposes.
-
-#### Command Line Usage
+Provide a questions CSV (example path: `field_name/sample_data.csv`) with headers `field_name,field_question`.
 
 ```bash
-# Process a CSV file with auto-generated output name
-python ollama_client.py input.csv
-
-# Process a CSV file with custom output name
-python ollama_client.py input.csv output.csv
+python ollama_client.py field_name/sample_data.csv
 ```
 
-#### Interactive Usage
+- Outputs will be written to `synthetic_data/` as multiple CSVs, one per question.
+- Control the number of rows per question with env var `ROWS_PER_QUESTION` (default 100):
+
+```bash
+ROWS_PER_QUESTION=200 python ollama_client.py field_name/sample_data.csv
+```
+
+### B) Legacy enhancement mode (optional)
+
+If you pass a CSV that contains a `text` column, the tool will enhance the text and write a processed file (compat behavior preserved):
+
+```bash
+python ollama_client.py input.csv  # must include a 'text' column
+```
+
+### Interactive mode
 
 ```bash
 python ollama_client.py
 ```
-
-Then follow the prompts to enter input and output CSV file paths.
-
-#### CSV Requirements
-
-- Must contain a `text` column with the input text data
-- All other columns will be preserved unchanged
-- The script processes each row (excluding header) and updates only the `text` column
-
-#### Example Input CSV Format
-
-```csv
-id,text,category,priority
-1,Users must provide valid credentials before accessing the system,security,high
-2,Data backup is required for all critical information exceeding 1GB,backup,high
-```
-
-#### Example Output
-
-The script will transform text like:
-```
-"Users must provide valid credentials before accessing the system"
-```
-
-Into something like:
-```
-"Pursuant to the terms and conditions outlined in this security policy document, users must provide valid credentials before accessing the system. This provision shall remain in effect for the duration of the session and may be subject to review and modification as deemed necessary by the system administrator."
-```
-
-### Programmatic Usage
-
-```python
-from ollama_client import OllamaClient
-
-# Initialize client
-client = OllamaClient(model_name="deepseek-r1")
-
-# Process CSV file
-output_path = client.process_csv_with_filler_sentences("input.csv", "output.csv")
-print(f"Processed file saved to: {output_path}")
-
-# Generate individual enhanced text
-enhanced_text = client._generate_enhanced_text("Original policy text here")
-print(enhanced_text)
-```
-
-### Custom Model Names
-
-If you're using a different DeepSeek R1 variant, specify it when initializing:
-
-```python
-client = OllamaClient(model_name="deepseek-r1:7b")
-```
-
-## Features
-
-- ✅ CSV file processing with text enhancement and fulfillment
-- ✅ Realistic context-appropriate filler sentence generation
-- ✅ Preservation of all original CSV data (except `text` column)
-- ✅ Connection testing to ensure Ollama is running
-- ✅ Model availability checking
-- ✅ Error handling for network issues and file operations
-- ✅ Interactive mode for file processing
-- ✅ Command line interface for batch processing
+Follow the prompts to run zero-shot generation from a questions CSV or use the legacy enhancement flow.
 
 ## Docker
 
-You can run this tool in Docker. The container expects an Ollama server to be reachable at `OLLAMA_BASE_URL`. By default, it uses `http://host.docker.internal:11434` to connect to an Ollama instance running on the host.
+You can run this tool in Docker. The container expects an Ollama server to be reachable at `OLLAMA_BASE_URL`. By default it uses `http://host.docker.internal:11434` (works on macOS/Windows).
 
 ### Build the image
 ```bash
 docker build -t sdg-app .
 ```
 
-### Run against a CSV
+### Run against a questions CSV
 ```bash
-# Mount your local data folders so outputs are persisted
 mkdir -p synthetic_data
 
 docker run --rm -it \
   -e OLLAMA_BASE_URL=http://host.docker.internal:11434 \
+  -e ROWS_PER_QUESTION=150 \
   -v "$PWD/field_name:/app/field_name" \
   -v "$PWD/synthetic_data:/app/synthetic_data" \
   sdg-app field_name/sample_data.csv
@@ -149,21 +91,34 @@ docker run --rm -it \
   sdg-app
 ```
 
-<<<<<<< HEAD
-Tip for Linux: replace `host.docker.internal` with your host IP (often `172.17.0.1`) or run Ollama in another container and network them together.
-=======
-### "CSV file must contain a 'text' column" error
-Ensure your CSV file has a column named exactly `text` (case-sensitive).
+Tip for Linux: replace `host.docker.internal` with your host IP (often `172.17.0.1`) or run Ollama in a sibling container and network them together (see `docker-compose.yml`).
 
-### "Input CSV file not found" error
-Check that the file path is correct and the file exists.
+## Docker Compose
 
-### Different Ollama URL
-If Ollama is running on a different port or host:
-```python
-client = OllamaClient(base_url="http://localhost:11435")
-``
-<<<<<<< HEAD
->>>>>>> f918ddc9f8d895a59e0c476cda0847f84c68769f
-=======
->>>>>>> f918ddc9f8d895a59e0c476cda0847f84c68769f
+A compose file is included to run Ollama and the app together.
+
+```bash
+docker compose up --build
+```
+
+- Ollama is exposed on `11434` and the app uses `http://ollama:11434` internally.
+- Mounts: `./field_name` for inputs, `./synthetic_data` for outputs.
+- Optionally pre-pull models by customizing the Ollama service command.
+
+## Configuration
+
+- `OLLAMA_BASE_URL`: URL of the Ollama server (default `http://127.0.0.1:11434` locally; Dockerfile default points to host).
+- `ROWS_PER_QUESTION`: number of synthetic rows to generate per question (default `100`).
+
+## Project structure (key files)
+
+- `ollama_client.py`: main client and CLI (zero-shot generation and legacy enhancement)
+- `field_name/`: put your questions CSV(s) here (e.g., `sample_data.csv`)
+- `synthetic_data/`: generated outputs (created if missing)
+- `Dockerfile`, `docker-compose.yml`: containerization assets
+- `requirements.txt`: Python dependencies (minimal)
+
+## Notes
+
+- The tool is model-agnostic but defaults to `deepseek-r1`. You can pass a different model name when constructing `OllamaClient` programmatically.
+- If the model returns non-JSON answers in zero-shot mode, the tool attempts robust parsing and falls back to reasonable defaults to ensure the requested number of rows.
