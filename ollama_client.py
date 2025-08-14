@@ -12,6 +12,15 @@ import csv
 import os
 import glob
 from typing import Optional, List, Dict
+from prompts import (
+    get_synthetic_generation_prompt,
+    get_text_enhancement_prompt,
+    get_batch_enhancement_prompt,
+    get_fallback_synthetic_row,
+    get_fallback_enhanced_text,
+    UNWANTED_PATTERNS,
+    CONFIG
+)
 
 
 class OllamaClient:
@@ -127,6 +136,16 @@ class OllamaClient:
         
         print(f"Processing {len(rows)} rows from {input_csv_path}")
         
+        # Check if we need to expand data to minimum 50 rows
+        min_rows = 50
+        if len(rows) < min_rows:
+            print(f"Data has {len(rows)} rows, expanding to minimum {min_rows} rows...")
+            # Duplicate existing rows to reach minimum count
+            while len(rows) < min_rows:
+                for i in range(min(len(rows), min_rows - len(rows))):
+                    rows.append(rows[i].copy())
+            print(f"Expanded to {len(rows)} rows")
+        
         # Extract all non-empty texts
         texts_to_process = []
         text_indices = []
@@ -140,9 +159,12 @@ class OllamaClient:
         print(f"Found {len(texts_to_process)} texts to enhance")
         
         if texts_to_process:
+            # Analyze existing text patterns for consistency
+            text_patterns = self._analyze_text_patterns(texts_to_process)
+            
             # Process all texts in a single API call
             print("Generating enhanced texts for all rows...")
-            enhanced_texts = self._generate_enhanced_texts_batch(texts_to_process)
+            enhanced_texts = self._generate_enhanced_texts_batch(texts_to_process, text_patterns)
             
             # Update the rows with enhanced texts
             for i, enhanced_text in zip(text_indices, enhanced_texts):
@@ -156,6 +178,65 @@ class OllamaClient:
         
         print(f"✅ Processed CSV saved to: {output_csv_path}")
         return output_csv_path
+    
+    def _analyze_text_patterns(self, texts: List[str]) -> str:
+        """
+        Analyze existing text patterns to maintain consistency in enhancement
+        
+        Args:
+            texts: List of existing texts to analyze
+            
+        Returns:
+            String describing the text patterns
+        """
+        if not texts:
+            return ""
+        
+        # Analyze common patterns
+        patterns = []
+        
+        # Check for common sentence starters
+        starters = []
+        for text in texts[:10]:  # Analyze first 10 texts
+            sentences = text.split('.')
+            for sentence in sentences:
+                sentence = sentence.strip()
+                if sentence and len(sentence.split()) >= 3:
+                    first_words = ' '.join(sentence.split()[:3])
+                    starters.append(first_words)
+        
+        if starters:
+            common_starters = list(set(starters))[:5]  # Top 5 unique starters
+            patterns.append(f"Common sentence starters: {', '.join(common_starters)}")
+        
+        # Check for common phrases
+        all_words = []
+        for text in texts:
+            words = text.lower().split()
+            all_words.extend(words)
+        
+        # Find common words (excluding common stop words)
+        from collections import Counter
+        word_counts = Counter(all_words)
+        common_words = [word for word, count in word_counts.most_common(10) 
+                       if len(word) > 3 and word not in ['the', 'and', 'for', 'with', 'this', 'that']]
+        
+        if common_words:
+            patterns.append(f"Common vocabulary: {', '.join(common_words[:5])}")
+        
+        # Check average sentence length
+        sentence_lengths = []
+        for text in texts:
+            sentences = text.split('.')
+            for sentence in sentences:
+                if sentence.strip():
+                    sentence_lengths.append(len(sentence.split()))
+        
+        if sentence_lengths:
+            avg_length = sum(sentence_lengths) / len(sentence_lengths)
+            patterns.append(f"Average sentence length: {avg_length:.1f} words")
+        
+        return "; ".join(patterns)
     
     def process_folder(self, input_folder: str = "field_name", output_folder: str = "synthetic_data") -> List[str]:
         """
@@ -279,18 +360,7 @@ class OllamaClient:
 
         Returns list of {answer, text} dicts with length == num_rows when possible.
         """
-        system_instructions = (
-            "You generate realistic, diverse synthetic data answers for contract-like or enterprise datasets. "
-            "Return strictly JSON only, no code fences, no commentary."
-        )
-
-        prompt = (
-            f"{system_instructions}\n\n"
-            f"Task: Generate {num_rows} diverse synthetic answers for the question below.\n"
-            f"Each item must be a JSON object with keys: 'answer' (short label) and 'text' (1-2 sentence description).\n"
-            f"Question (field_name={field_name_value}): {field_question_value}\n\n"
-            f"Return a JSON array with exactly {num_rows} items."
-        )
+        prompt = get_synthetic_generation_prompt(field_name_value, field_question_value, num_rows)
 
         raw = self.generate_response(prompt)
         rows: List[Dict[str, str]] = []
@@ -316,35 +386,30 @@ class OllamaClient:
         # Fallback to simple templated rows if parsing failed
         if not rows:
             for i in range(1, num_rows + 1):
-                rows.append({
-                    "answer": f"value_{i}",
-                    "text": f"Synthetic response {i} for {field_name_value}: {field_question_value}",
-                })
+                rows.append(get_fallback_synthetic_row(i, field_name_value, field_question_value))
 
         # Truncate or pad to exact length
         if len(rows) > num_rows:
             rows = rows[:num_rows]
         elif len(rows) < num_rows:
             for i in range(len(rows) + 1, num_rows + 1):
-                rows.append({
-                    "answer": f"value_{i}",
-                    "text": f"Synthetic response {i} for {field_name_value}: {field_question_value}",
-                })
+                rows.append(get_fallback_synthetic_row(i, field_name_value, field_question_value))
 
         return rows
 
-    def _generate_enhanced_texts_batch(self, original_texts: List[str]) -> List[str]:
+    def _generate_enhanced_texts_batch(self, original_texts: List[str], text_patterns: str = "") -> List[str]:
         """
         Generate enhanced text for multiple texts in a single API call
         
         Args:
             original_texts: List of original texts from the CSV
+            text_patterns: Analyzed text patterns for consistency
             
         Returns:
             List of enhanced texts with filler sentences
         """
         # Process in smaller batches to avoid token limits
-        batch_size = 5  # Process 5 texts at a time
+        batch_size = CONFIG["batch_size"]  # Process texts in batches
         all_enhanced_texts = []
         
         for i in range(0, len(original_texts), batch_size):
@@ -353,11 +418,12 @@ class OllamaClient:
             
             texts_list = "\n".join([f"{batch_numbers[j]}. {text}" for j, text in enumerate(batch_texts)])
             
-            prompt = f"""Enhance these {len(batch_texts)} texts with contract-style filler sentences. Return exactly {len(batch_texts)} numbered responses:
-
-{texts_list}
-
-Enhanced:"""
+            # Include text patterns in prompt if available
+            if text_patterns:
+                pattern_info = f"\nText patterns to maintain consistency: {text_patterns}\n"
+                prompt = get_batch_enhancement_prompt(texts_list, len(batch_texts)) + pattern_info
+            else:
+                prompt = get_batch_enhancement_prompt(texts_list, len(batch_texts))
             
             print(f"Processing batch {i//batch_size + 1}/{(len(original_texts) + batch_size - 1)//batch_size} ({len(batch_texts)} texts)...")
             
@@ -372,12 +438,12 @@ Enhanced:"""
                     print(f"Batch parsing failed, processing individually...")
                     # Fall back to individual processing for this batch
                     for text in batch_texts:
-                        enhanced = self._generate_enhanced_text(text)
+                        enhanced = self._generate_enhanced_text(text, text_patterns)
                         all_enhanced_texts.append(enhanced)
             else:
                 # Fall back to individual processing for this batch
                 for text in batch_texts:
-                    enhanced = self._generate_enhanced_text(text)
+                    enhanced = self._generate_enhanced_text(text, text_patterns)
                     all_enhanced_texts.append(enhanced)
         
         return all_enhanced_texts
@@ -397,21 +463,7 @@ Enhanced:"""
         response = response.strip()
         
         # Remove unwanted patterns
-        unwanted_patterns = [
-            "I'm sorry for misunderstanding",
-            "I'm sorry for any confusion",
-            "as an AI model",
-            "as an AI Programming Assistant",
-            "designed to assist with computer science",
-            "specializing in computer science",
-            "Please note",
-            "(Note:",
-            "(Please note",
-            "Enhanced paragraphs:",
-            "Enhanced texts:",
-            "Output:",
-            "Result:"
-        ]
+        unwanted_patterns = UNWANTED_PATTERNS
         
         # Remove lines with unwanted patterns
         lines = response.split('\n')
@@ -481,19 +533,23 @@ Enhanced:"""
         
         return enhanced_texts
     
-    def _generate_enhanced_text(self, original_text: str) -> str:
+    def _generate_enhanced_text(self, original_text: str, text_patterns: str = "") -> str:
         """
         Generate enhanced text with realistic contract-style filler sentences
         
         Args:
             original_text: The original text from the CSV
+            text_patterns: Analyzed text patterns for consistency
             
         Returns:
             Enhanced text with filler sentences
         """
-        prompt = f"""Add contract-style sentences before and after this text to make it a complete paragraph: "{original_text}"
-
-Output only the enhanced paragraph:"""
+        prompt = get_text_enhancement_prompt(original_text)
+        
+        # Include text patterns in prompt if available
+        if text_patterns:
+            pattern_info = f"\nText patterns to maintain consistency: {text_patterns}\n"
+            prompt += pattern_info
         
         response = self.generate_response(prompt)
         
@@ -503,21 +559,7 @@ Output only the enhanced paragraph:"""
             response = response.strip().strip('"').strip("'")
             
             # Remove common unwanted patterns
-            unwanted_patterns = [
-                "I'm sorry for misunderstanding",
-                "I'm sorry for any confusion",
-                "as an AI model",
-                "as an AI Programming Assistant",
-                "designed to assist with computer science",
-                "specializing in computer science",
-                "Please note",
-                "(Note:",
-                "(Please note",
-                "Enhanced paragraph:",
-                "Enhanced text:",
-                "Output:",
-                "Result:"
-            ]
+            unwanted_patterns = UNWANTED_PATTERNS
             
             # Remove lines containing unwanted patterns
             lines = response.split('\n')
@@ -532,12 +574,12 @@ Output only the enhanced paragraph:"""
             
             # If still empty or problematic, use fallback
             if not cleaned_response or len(cleaned_response) < 20:
-                return f"Pursuant to the terms and conditions outlined in this healthcare policy document, {original_text}. This provision shall remain in effect for the duration of the policy period and may be subject to review and modification as deemed necessary by the policy administrator."
+                return get_fallback_enhanced_text(original_text)
             
             return cleaned_response
         else:
             # Fallback if generation fails
-            return f"Pursuant to the terms and conditions outlined in this healthcare policy document, {original_text}. This provision shall remain in effect for the duration of the policy period and may be subject to review and modification as deemed necessary by the policy administrator."
+            return get_fallback_enhanced_text(original_text)
 
 
 def main():
